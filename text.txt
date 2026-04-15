@@ -1,0 +1,48 @@
+Process the following ServiceNow ticket and generate structured output.
+
+RTIM: {{$json["Number"]}}
+Short Description: {{$json["Short description"]}}
+Description: {{$json["Description"]}}
+Comments and Work Notes:
+{{$json["Comments and Work notes"]}}
+
+Instructions:
+
+1. Issue Summary:
+- Understand the main problem from short description, description, and comments
+
+2. Solution Provided:
+- Extract actual resolution steps from comments
+- Ignore system-generated messages (like auto-close, status updates)
+
+3. Category (choose ONLY one):
+- User Knowledge Gap
+- Access Issue
+- Data Confusion
+- System Bug
+- Process Clarification
+- Configuration Error
+- Release/Change Impact
+- Other
+
+4. System Component:
+- Identify system/module (e.g., GCARS, Fenergo, KYC, LEM, etc.)
+- If not found → "No data"
+
+5. User Type:
+- New User / Old User / No data
+
+6. Actionable Insights:
+- Suggest improvement (training, process, automation, UI fix)
+
+Return STRICT JSON:
+
+{
+  "A - RTIM": "...",
+  "B - Issue Summary": "...",
+  "C - Solution Provided": "...",
+  "D - Category": "...",
+  "E - System Component": "...",
+  "F - User Type": "...",
+  "G - Actionable Insights": "..."
+}
