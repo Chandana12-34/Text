@@ -1,197 +1,159 @@
-Process the following ServiceNow ticket and generate structured output.
-
-RTIM: {{$json["Number"]}}
-Short Description: {{$json["Short description"]}}
-Description: {{$json["Description"]}}
-Comments and Work Notes:
-{{$json["Comments and Work notes"]}}
-
-Instructions:
-
-1. Issue Summary:
-- Understand the main problem from short description, description, and comments
-
-2. Solution Provided:
-- Extract actual resolution steps from comments
-- Ignore system-generated messages (like auto-close, status updates)
-
-3. Category (choose ONLY one):
-- User Knowledge Gap
-- Access Issue
-- Data Confusion
-- System Bug
-- Process Clarification
-- Configuration Error
-- Release/Change Impact
-- Other
-
-4. System Component:
-- Identify system/module (e.g., GCARS, Fenergo, KYC, LEM, etc.)
-- If not found → "No data"
-
-5. User Type:
-- New User / Old User / No data
-
-6. Actionable Insights:
-- Suggest improvement (training, process, automation, UI fix)
-
-Return STRICT JSON:
-
-{
-  "A - RTIM": "...",
-  "B - Issue Summary": "...",
-  "C - Solution Provided": "...",
-  "D - Category": "...",
-  "E - System Component": "...",
-  "F - User Type": "...",
-  "G - Actionable Insights": "..."
-You are an expert in IT Service Management and ServiceNow ticket analysis.
-
-Rules:
-- Process only the given ticket data
-- Do not assume missing data
-- Ignore system-generated messages
-- Keep answers concise and business-friendly
-- Return ONLY valid JSON
-- Do NOT add explanations
-
 import pandas as pd
-import json
-from openai import OpenAI
-import time
-
-# 🔐 Add your API key
-client = OpenAI(api_key="YOUR_API_KEY")
+import re
 
 # 📥 Load Excel
 df = pd.read_excel("input.xlsx")
 
-# 🧠 Prompt Builder (STRICT FORMAT)
-def build_prompt(row):
-    return f"""
-You are an expert in IT Service Management, user-behavior analytics, and application-support optimization.
+# 🧹 Clean text safely
+def clean_text(text):
+    if pd.isna(text):
+        return ""
+    return str(text).strip()
 
-Analyze the following ServiceNow ticket:
 
-Number: {row.get('Number', '')}
-Short Description: {row.get('Short Description', '')}
-Description: {row.get('Description', '')}
-Comments and Work Notes: {row.get('Comments and Work Notes', '')}
+# 🔍 Extract latest meaningful human comment
+def extract_latest_comment(text):
+    text = clean_text(text)
+    if not text:
+        return ""
 
-Follow ALL rules strictly:
+    lines = text.split("\n")
+    valid_lines = []
 
-1. Issue Summary:
-- Understand issue using Short Description + Description + Comments
+    for line in lines:
+        l = line.lower()
 
-2. Solution Provided:
-- Ignore system-generated lines
-- Ignore 72-hour closure messages
-- Focus only on latest human meaningful comment
-- Extract actionable response
-- Summarize in 2–3 sentences:
-  → what analyst says
-  → why (if given)
-  → next steps
+        # ❌ Ignore system lines
+        if any(x in l for x in ["state:", "infos:", "assigned", "closed"]):
+            continue
+        if "72" in l and "closed" in l:
+            continue
+        if "system" in l or "apigee" in l:
+            continue
 
-- If message includes user addressing (Hi, Dear, @user), prefix with:
-  "Personalised reply -"
+        # ✅ Keep meaningful lines
+        if len(line.strip()) > 25:
+            valid_lines.append(line.strip())
 
-- If no response and ticket closed:
-  "No further action - ticket closed after 72 hours of inactivity"
+    return valid_lines[-1] if valid_lines else ""
 
-3. Category (choose one):
-User Knowledge Gap, Access Issue, Data Confusion, System Bug,
-Process Clarification, Configuration Error, Release/Change Impact, Other
 
-4. System Component:
-- Extract final mentioned system/module
+# 🧠 Issue Summary (B)
+def generate_issue_summary(row):
+    short_desc = clean_text(row["short descriptions"])
+    desc = clean_text(row["Description"])
+    return (short_desc + " " + desc).strip()
 
-5. User Type:
-- New User / Old User / No Data
 
-6. Actionable Insights:
-Choose one or more:
-- Training Opportunities
-- Application Improvements
-- Process Improvements
-- Automation Opportunities
+# 🛠 Solution (C)
+def generate_solution(comment):
+    if not comment:
+        return "No further action - ticket closed after 72 hours of inactivity"
 
-Return ONLY valid JSON:
+    # Detect personalised reply
+    if any(x in comment.lower() for x in ["hi ", "dear ", "@"]):
+        return "Personalised reply - " + comment[:250]
 
-{{
-"A": "",
-"B": "",
-"C": "",
-"D": "",
-"E": "",
-"F": "",
-"G": ""
-}}
-"""
+    return comment[:250]
 
-# 🤖 AI Call with retry
-def process_with_ai(prompt, retries=3):
-    for attempt in range(retries):
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"Retry {attempt+1} due to error:", e)
-            time.sleep(2)
-    return None
 
-# 🔄 Process each row
+# 🏷 Category (D)
+def classify_category(text):
+    text = text.lower()
+
+    if any(x in text for x in ["access", "login", "permission"]):
+        return "Access Issue"
+    elif any(x in text for x in ["error", "failure", "bug", "incorrect"]):
+        return "System Bug"
+    elif "data" in text:
+        return "Data Confusion"
+    elif any(x in text for x in ["how", "process", "steps"]):
+        return "Process Clarification"
+    elif "config" in text:
+        return "Configuration Error"
+    elif "release" in text:
+        return "Release/Change Impact"
+    else:
+        return "User Knowledge Gap"
+
+
+# 🧩 System Component (E)
+def extract_component(text):
+    components = ["KYC", "OCARS", "Apigee", "Comprehensive", "LE", "FENERGO"]
+
+    for comp in components:
+        if comp.lower() in text.lower():
+            return comp
+
+    return "FENERGO"
+
+
+# 👤 User Type (F)
+def get_user_type(row):
+    val = clean_text(row.get("new vs old user", "")).lower()
+
+    if "new" in val:
+        return "New User"
+    elif "old" in val:
+        return "Old User"
+    else:
+        return "No Data"
+
+
+# 💡 Insights (G)
+def generate_insights(category):
+    if category == "User Knowledge Gap":
+        return "Training Opportunity - provide user guidance or documentation"
+    elif category == "System Bug":
+        return "Application Improvement - fix system defect"
+    elif category == "Process Clarification":
+        return "Process Improvement - clarify workflow or steps"
+    elif category == "Access Issue":
+        return "Automation Opportunity - streamline access provisioning"
+    else:
+        return "Training Opportunity"
+
+
+# 🔄 Main Processing
 results = []
 
 for i, row in df.iterrows():
     print(f"Processing row {i+1}/{len(df)}")
 
-    prompt = build_prompt(row)
-    ai_output = process_with_ai(prompt)
+    # Extract fields
+    comments = clean_text(row["Comments and work notes"])
+    latest_comment = extract_latest_comment(comments)
 
-    if not ai_output:
-        parsed = {
-            "A": "",
-            "B": "Error",
-            "C": "API failed",
-            "D": "",
-            "E": "",
-            "F": "",
-            "G": ""
-        }
-    else:
-        try:
-            parsed = json.loads(ai_output)
-        except:
-            parsed = {
-                "A": "",
-                "B": "Parsing Error",
-                "C": ai_output,
-                "D": "",
-                "E": "",
-                "F": "",
-                "G": ""
-            }
+    issue_summary = generate_issue_summary(row)
+    solution = generate_solution(latest_comment)
 
-    # ✅ Ensure RITM formatting
-    ritm = str(row.get("Number", ""))
+    combined_text = issue_summary + " " + latest_comment
+
+    category = classify_category(combined_text)
+    component = extract_component(combined_text)
+    user_type = get_user_type(row)
+    insights = generate_insights(category)
+
+    # 🎯 RITM formatting (Column A)
+    ritm = clean_text(row["Number"])
     if not ritm.startswith("RITM"):
         ritm = "RITM" + ritm
 
-    parsed["A"] = ritm
+    results.append({
+        "A": ritm,
+        "B": issue_summary,
+        "C": solution,
+        "D": category,
+        "E": component,
+        "F": user_type,
+        "G": insights
+    })
 
-    results.append(parsed)
 
-# 📤 Save output
+# 📤 Save Output
 output_df = pd.DataFrame(results)
-
-# Ensure correct column order
 output_df = output_df[["A", "B", "C", "D", "E", "F", "G"]]
 
 output_df.to_excel("output.xlsx", index=False)
 
-print("✅ Done! Output saved as output.xlsx")
+print("✅ Output file generated: output.xlsx")
