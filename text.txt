@@ -54,3 +54,144 @@ Rules:
 - Keep answers concise and business-friendly
 - Return ONLY valid JSON
 - Do NOT add explanations
+
+import pandas as pd
+import json
+from openai import OpenAI
+import time
+
+# 🔐 Add your API key
+client = OpenAI(api_key="YOUR_API_KEY")
+
+# 📥 Load Excel
+df = pd.read_excel("input.xlsx")
+
+# 🧠 Prompt Builder (STRICT FORMAT)
+def build_prompt(row):
+    return f"""
+You are an expert in IT Service Management, user-behavior analytics, and application-support optimization.
+
+Analyze the following ServiceNow ticket:
+
+Number: {row.get('Number', '')}
+Short Description: {row.get('Short Description', '')}
+Description: {row.get('Description', '')}
+Comments and Work Notes: {row.get('Comments and Work Notes', '')}
+
+Follow ALL rules strictly:
+
+1. Issue Summary:
+- Understand issue using Short Description + Description + Comments
+
+2. Solution Provided:
+- Ignore system-generated lines
+- Ignore 72-hour closure messages
+- Focus only on latest human meaningful comment
+- Extract actionable response
+- Summarize in 2–3 sentences:
+  → what analyst says
+  → why (if given)
+  → next steps
+
+- If message includes user addressing (Hi, Dear, @user), prefix with:
+  "Personalised reply -"
+
+- If no response and ticket closed:
+  "No further action - ticket closed after 72 hours of inactivity"
+
+3. Category (choose one):
+User Knowledge Gap, Access Issue, Data Confusion, System Bug,
+Process Clarification, Configuration Error, Release/Change Impact, Other
+
+4. System Component:
+- Extract final mentioned system/module
+
+5. User Type:
+- New User / Old User / No Data
+
+6. Actionable Insights:
+Choose one or more:
+- Training Opportunities
+- Application Improvements
+- Process Improvements
+- Automation Opportunities
+
+Return ONLY valid JSON:
+
+{{
+"A": "",
+"B": "",
+"C": "",
+"D": "",
+"E": "",
+"F": "",
+"G": ""
+}}
+"""
+
+# 🤖 AI Call with retry
+def process_with_ai(prompt, retries=3):
+    for attempt in range(retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"Retry {attempt+1} due to error:", e)
+            time.sleep(2)
+    return None
+
+# 🔄 Process each row
+results = []
+
+for i, row in df.iterrows():
+    print(f"Processing row {i+1}/{len(df)}")
+
+    prompt = build_prompt(row)
+    ai_output = process_with_ai(prompt)
+
+    if not ai_output:
+        parsed = {
+            "A": "",
+            "B": "Error",
+            "C": "API failed",
+            "D": "",
+            "E": "",
+            "F": "",
+            "G": ""
+        }
+    else:
+        try:
+            parsed = json.loads(ai_output)
+        except:
+            parsed = {
+                "A": "",
+                "B": "Parsing Error",
+                "C": ai_output,
+                "D": "",
+                "E": "",
+                "F": "",
+                "G": ""
+            }
+
+    # ✅ Ensure RITM formatting
+    ritm = str(row.get("Number", ""))
+    if not ritm.startswith("RITM"):
+        ritm = "RITM" + ritm
+
+    parsed["A"] = ritm
+
+    results.append(parsed)
+
+# 📤 Save output
+output_df = pd.DataFrame(results)
+
+# Ensure correct column order
+output_df = output_df[["A", "B", "C", "D", "E", "F", "G"]]
+
+output_df.to_excel("output.xlsx", index=False)
+
+print("✅ Done! Output saved as output.xlsx")
