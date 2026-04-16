@@ -1,73 +1,76 @@
 import pandas as pd
-import re
+import spacy
 
-# 📥 Load Excel
+# Load NLP model
+nlp = spacy.load("en_core_web_sm")
+
+# Load Excel
 df = pd.read_excel("input.xlsx")
 
-# 🧹 Clean text safely
-def clean_text(text):
+
+# 🧹 Clean text
+def clean(text):
     if pd.isna(text):
         return ""
     return str(text).strip()
 
 
-# 🔍 Extract latest meaningful human comment
+# 🔍 Extract latest human comment
 def extract_latest_comment(text):
-    text = clean_text(text)
-    if not text:
-        return ""
-
+    text = clean(text)
     lines = text.split("\n")
-    valid_lines = []
 
+    valid = []
     for line in lines:
         l = line.lower()
 
-        # ❌ Ignore system lines
         if any(x in l for x in ["state:", "infos:", "assigned", "closed"]):
             continue
         if "72" in l and "closed" in l:
             continue
-        if "system" in l or "apigee" in l:
+        if "system" in l:
             continue
 
-        # ✅ Keep meaningful lines
         if len(line.strip()) > 25:
-            valid_lines.append(line.strip())
+            valid.append(line.strip())
 
-    return valid_lines[-1] if valid_lines else ""
-
-
-# 🧠 Issue Summary (B)
-def generate_issue_summary(row):
-    short_desc = clean_text(row["short descriptions"])
-    desc = clean_text(row["Description"])
-    return (short_desc + " " + desc).strip()
+    return valid[-1] if valid else ""
 
 
-# 🛠 Solution (C)
+# 🧠 Issue Summary using NLP
+def generate_issue_summary(text):
+    doc = nlp(text)
+
+    keywords = []
+    for token in doc:
+        if token.pos_ in ["NOUN", "VERB"] and not token.is_stop:
+            keywords.append(token.text)
+
+    return " ".join(keywords[:20])
+
+
+# 🛠 Solution
 def generate_solution(comment):
     if not comment:
         return "No further action - ticket closed after 72 hours of inactivity"
 
-    # Detect personalised reply
-    if any(x in comment.lower() for x in ["hi ", "dear ", "@"]):
-        return "Personalised reply - " + comment[:250]
+    if any(x in comment.lower() for x in ["hi", "dear", "@"]):
+        return "Personalised reply - " + comment[:200]
 
-    return comment[:250]
+    return comment[:200]
 
 
-# 🏷 Category (D)
+# 🏷 Category (Hybrid logic)
 def classify_category(text):
     text = text.lower()
 
-    if any(x in text for x in ["access", "login", "permission"]):
+    if "access" in text or "login" in text:
         return "Access Issue"
-    elif any(x in text for x in ["error", "failure", "bug", "incorrect"]):
+    elif "error" in text or "fail" in text or "incorrect" in text:
         return "System Bug"
     elif "data" in text:
         return "Data Confusion"
-    elif any(x in text for x in ["how", "process", "steps"]):
+    elif "process" in text or "steps" in text:
         return "Process Clarification"
     elif "config" in text:
         return "Configuration Error"
@@ -77,65 +80,67 @@ def classify_category(text):
         return "User Knowledge Gap"
 
 
-# 🧩 System Component (E)
+# 🧩 Extract component using NLP
 def extract_component(text):
-    components = ["KYC", "OCARS", "Apigee", "Comprehensive", "LE", "FENERGO"]
+    doc = nlp(text)
 
-    for comp in components:
-        if comp.lower() in text.lower():
-            return comp
+    for ent in doc.ents:
+        if ent.label_ in ["ORG", "PRODUCT"]:
+            return ent.text
+
+    keywords = ["KYC", "OCARS", "Apigee", "FENERGO"]
+    for k in keywords:
+        if k.lower() in text.lower():
+            return k
 
     return "FENERGO"
 
 
-# 👤 User Type (F)
+# 👤 User Type
 def get_user_type(row):
-    val = clean_text(row.get("new vs old user", "")).lower()
+    val = clean(row.get("new vs old user", "")).lower()
 
     if "new" in val:
         return "New User"
     elif "old" in val:
         return "Old User"
-    else:
-        return "No Data"
+    return "No Data"
 
 
-# 💡 Insights (G)
+# 💡 Insights
 def generate_insights(category):
-    if category == "User Knowledge Gap":
-        return "Training Opportunity - provide user guidance or documentation"
-    elif category == "System Bug":
-        return "Application Improvement - fix system defect"
-    elif category == "Process Clarification":
-        return "Process Improvement - clarify workflow or steps"
-    elif category == "Access Issue":
-        return "Automation Opportunity - streamline access provisioning"
-    else:
-        return "Training Opportunity"
+    mapping = {
+        "User Knowledge Gap": "Training Opportunity",
+        "System Bug": "Application Improvement",
+        "Process Clarification": "Process Improvement",
+        "Access Issue": "Automation Opportunity"
+    }
+    return mapping.get(category, "Training Opportunity")
 
 
-# 🔄 Main Processing
+# 🔄 Main loop
 results = []
 
 for i, row in df.iterrows():
-    print(f"Processing row {i+1}/{len(df)}")
+    print(f"Processing {i+1}/{len(df)}")
 
-    # Extract fields
-    comments = clean_text(row["Comments and work notes"])
+    short_desc = clean(row["short descriptions"])
+    desc = clean(row["Description"])
+    comments = clean(row["Comments and work notes"])
+
     latest_comment = extract_latest_comment(comments)
 
-    issue_summary = generate_issue_summary(row)
+    combined_text = short_desc + " " + desc
+
+    issue_summary = generate_issue_summary(combined_text)
     solution = generate_solution(latest_comment)
 
-    combined_text = issue_summary + " " + latest_comment
-
-    category = classify_category(combined_text)
-    component = extract_component(combined_text)
+    category = classify_category(combined_text + " " + latest_comment)
+    component = extract_component(combined_text + " " + latest_comment)
     user_type = get_user_type(row)
     insights = generate_insights(category)
 
-    # 🎯 RITM formatting (Column A)
-    ritm = clean_text(row["Number"])
+    ritm = clean(row["Number"])
     if not ritm.startswith("RITM"):
         ritm = "RITM" + ritm
 
@@ -150,10 +155,10 @@ for i, row in df.iterrows():
     })
 
 
-# 📤 Save Output
+# Save output
 output_df = pd.DataFrame(results)
 output_df = output_df[["A", "B", "C", "D", "E", "F", "G"]]
 
 output_df.to_excel("output.xlsx", index=False)
 
-print("✅ Output file generated: output.xlsx")
+print("✅ Hybrid processing completed!")
