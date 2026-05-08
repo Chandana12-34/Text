@@ -1,164 +1,318 @@
 import pandas as pd
-import spacy
+import json
+import os
+import time
+import re
 
-# Load NLP model
-nlp = spacy.load("en_core_web_sm")
+from tqdm import tqdm
+from dotenv import load_dotenv
+from openai import OpenAI
 
-# Load Excel
-df = pd.read_excel("input.xlsx")
+# =========================================================
+# LOAD ENV VARIABLES
+# =========================================================
 
+load_dotenv()
 
-# 🧹 Clean text
-def clean(text):
+API_KEY = os.getenv("API_KEY")
+
+# =========================================================
+# CREATE OPENAI CLIENT
+# =========================================================
+
+client = OpenAI(
+    api_key=API_KEY,
+    base_url="https://api.llm.cib.echonet/v1/openai"
+)
+
+# =========================================================
+# FILE PATHS
+# =========================================================
+
+INPUT_FILE = "input/ritm_input.xlsx"
+OUTPUT_FILE = "output/ritm_output.xlsx"
+
+# =========================================================
+# READ EXCEL FILE
+# =========================================================
+
+df = pd.read_excel(INPUT_FILE)
+
+# =========================================================
+# AUTO COLUMN DETECTION
+# =========================================================
+
+def find_column(keyword_list):
+
+    for col in df.columns:
+
+        lower = col.lower()
+
+        for keyword in keyword_list:
+
+            if keyword in lower:
+                return col
+
+    return None
+
+NUMBER_COL = find_column(["number"])
+SHORT_DESC_COL = find_column(["short"])
+DESCRIPTION_COL = find_column(["description"])
+COMMENTS_COL = find_column(["comments", "work notes"])
+USER_TYPE_COL = find_column(["new vs old"])
+
+print("Detected Columns:")
+print(NUMBER_COL)
+print(SHORT_DESC_COL)
+print(DESCRIPTION_COL)
+print(COMMENTS_COL)
+print(USER_TYPE_COL)
+
+# =========================================================
+# CLEAN COMMENTS FUNCTION
+# =========================================================
+
+def clean_comments(text):
+
     if pd.isna(text):
         return ""
-    return str(text).strip()
 
+    text = str(text)
 
-# 🔍 Extract latest human comment
-def extract_latest_comment(text):
-    text = clean(text)
-    lines = text.split("\n")
+    patterns = [
+        r"Infos:.*",
+        r"State - Open.*",
+        r"State - On Hold.*",
+        r"closed after 72 hrs.*",
+        r"APS L1 Support.*"
+    ]
 
-    valid = []
-    for line in lines:
-        l = line.lower()
+    for pattern in patterns:
+        text = re.sub(pattern, "", text)
 
-        if any(x in l for x in ["state:", "infos:", "assigned", "closed"]):
-            continue
-        if "72" in l and "closed" in l:
-            continue
-        if "system" in l:
-            continue
+    return text.strip()
 
-        if len(line.strip()) > 25:
-            valid.append(line.strip())
+# =========================================================
+# SYSTEM PROMPT
+# =========================================================
 
-    return valid[-1] if valid else ""
+SYSTEM_PROMPT = """
+You are an expert IT Service Management analyst.
 
+Analyze ServiceNow RITM tickets.
 
-# 🧠 Issue Summary using NLP
-def generate_issue_summary(text):
-    doc = nlp(text)
+Generate:
 
-    keywords = []
-    for token in doc:
-        if token.pos_ in ["NOUN", "VERB"] and not token.is_stop:
-            keywords.append(token.text)
+1. Issue Summary
+2. Solution Provided
+3. Business-Relevant Category
+4. System Component
+5. User Type
+6. Actionable Insights
 
-    return " ".join(keywords[:20])
+RULES:
 
+- Use concise business-friendly language.
+- Ignore system-generated metadata.
+- Read comments/work notes carefully.
+- Extract actual analyst resolution.
+- Mention if issue closed after inactivity.
 
-# 🛠 Solution
-def generate_solution(comment):
-    if not comment:
-        return "No further action - ticket closed after 72 hours of inactivity"
+Allowed Categories:
+- User Knowledge Gap
+- Access Issue
+- Data Confusion
+- System Bug
+- Process Clarification
+- Configuration Error
+- Release/Change Impact
+- Other
 
-    if any(x in comment.lower() for x in ["hi", "dear", "@"]):
-        return "Personalised reply - " + comment[:200]
+Actionable Insights examples:
+- Training Opportunities
+- Process Improvements
+- Application Improvements
+- Automation Opportunities
 
-    return comment[:200]
+Return ONLY VALID JSON.
 
+JSON FORMAT:
 
-# 🏷 Category (Hybrid logic)
-def classify_category(text):
-    text = text.lower()
+{
+    "Issue Summary": "",
+    "Solution Provided": "",
+    "Business-Relevant Category": "",
+    "System Component": "",
+    "User Type": "",
+    "Actionable Insights": ""
+}
+"""
 
-    if "access" in text or "login" in text:
-        return "Access Issue"
-    elif "error" in text or "fail" in text or "incorrect" in text:
-        return "System Bug"
-    elif "data" in text:
-        return "Data Confusion"
-    elif "process" in text or "steps" in text:
-        return "Process Clarification"
-    elif "config" in text:
-        return "Configuration Error"
-    elif "release" in text:
-        return "Release/Change Impact"
-    else:
-        return "User Knowledge Gap"
+# =========================================================
+# ANALYZE SINGLE TICKET
+# =========================================================
 
+def analyze_ticket(row):
 
-# 🧩 Extract component using NLP
-def extract_component(text):
-    doc = nlp(text)
+    ticket_number = str(row.get(NUMBER_COL, ""))
+    short_desc = str(row.get(SHORT_DESC_COL, ""))
+    description = str(row.get(DESCRIPTION_COL, ""))
+    comments = clean_comments(row.get(COMMENTS_COL, ""))
+    user_type = str(row.get(USER_TYPE_COL, ""))
 
-    for ent in doc.ents:
-        if ent.label_ in ["ORG", "PRODUCT"]:
-            return ent.text
+    user_prompt = f"""
+    Ticket Number:
+    {ticket_number}
 
-    keywords = ["KYC", "OCARS", "Apigee", "FENERGO"]
-    for k in keywords:
-        if k.lower() in text.lower():
-            return k
+    Short Description:
+    {short_desc}
 
-    return "FENERGO"
+    Description:
+    {description}
 
+    Comments and Work Notes:
+    {comments}
 
-# 👤 User Type
-def get_user_type(row):
-    val = clean(row.get("new vs old user", "")).lower()
+    User Type:
+    {user_type}
+    """
 
-    if "new" in val:
-        return "New User"
-    elif "old" in val:
-        return "Old User"
-    return "No Data"
+    try:
 
+        response = client.chat.completions.create(
+            model="mistral-medium-2508-ITG",
+            temperature=0.2,
+            messages=[
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ]
+        )
 
-# 💡 Insights
-def generate_insights(category):
-    mapping = {
-        "User Knowledge Gap": "Training Opportunity",
-        "System Bug": "Application Improvement",
-        "Process Clarification": "Process Improvement",
-        "Access Issue": "Automation Opportunity"
-    }
-    return mapping.get(category, "Training Opportunity")
+        content = response.choices[0].message.content
 
+        content = (
+            content
+            .replace("```json", "")
+            .replace("```", "")
+            .strip()
+        )
 
-# 🔄 Main loop
+        parsed = json.loads(content)
+
+        return {
+            "A - RITM":
+                f"RITM{ticket_number}"
+                if "RITM" not in ticket_number
+                else ticket_number,
+
+            "B - Issue Summary":
+                parsed.get("Issue Summary", ""),
+
+            "C - Solution Provided":
+                parsed.get("Solution Provided", ""),
+
+            "D - Category":
+                parsed.get("Business-Relevant Category", ""),
+
+            "E - System Component":
+                parsed.get("System Component", ""),
+
+            "F - User Type":
+                parsed.get("User Type", ""),
+
+            "G - Actionable Insights":
+                parsed.get("Actionable Insights", "")
+        }
+
+    except Exception as e:
+
+        print(f"Error Processing Ticket {ticket_number}")
+        print(e)
+
+        return {
+            "A - RITM": ticket_number,
+            "B - Issue Summary": "ERROR",
+            "C - Solution Provided": "ERROR",
+            "D - Category": "ERROR",
+            "E - System Component": "ERROR",
+            "F - User Type": "ERROR",
+            "G - Actionable Insights": "Manual Review Needed"
+        }
+
+# =========================================================
+# PROCESS ALL TICKETS
+# =========================================================
+
 results = []
 
-for i, row in df.iterrows():
-    print(f"Processing {i+1}/{len(df)}")
+for _, row in tqdm(df.iterrows(), total=len(df)):
 
-    short_desc = clean(row["short descriptions"])
-    desc = clean(row["Description"])
-    comments = clean(row["Comments and work notes"])
+    result = analyze_ticket(row)
 
-    latest_comment = extract_latest_comment(comments)
+    results.append(result)
 
-    combined_text = short_desc + " " + desc
+    time.sleep(1)
 
-    issue_summary = generate_issue_summary(combined_text)
-    solution = generate_solution(latest_comment)
+# =========================================================
+# CREATE OUTPUT DATAFRAME
+# =========================================================
 
-    category = classify_category(combined_text + " " + latest_comment)
-    component = extract_component(combined_text + " " + latest_comment)
-    user_type = get_user_type(row)
-    insights = generate_insights(category)
+output_df = pd.DataFrame(results)
 
-    ritm = clean(row["Number"])
-    if not ritm.startswith("RITM"):
-        ritm = "RITM" + ritm
+# =========================================================
+# EXPORT EXCEL
+# =========================================================
 
-    results.append({
-        "A": ritm,
-        "B": issue_summary,
-        "C": solution,
-        "D": category,
-        "E": component,
-        "F": user_type,
-        "G": insights
+with pd.ExcelWriter(
+    OUTPUT_FILE,
+    engine="xlsxwriter"
+) as writer:
+
+    output_df.to_excel(
+        writer,
+        sheet_name="RITM Analysis",
+        index=False
+    )
+
+    workbook = writer.book
+    worksheet = writer.sheets["RITM Analysis"]
+
+    # HEADER FORMAT
+    header_format = workbook.add_format({
+        "bold": True,
+        "bg_color": "#CFE2F3",
+        "border": 1,
+        "text_wrap": True,
+        "valign": "top"
     })
 
+    # CELL FORMAT
+    cell_format = workbook.add_format({
+        "text_wrap": True,
+        "valign": "top",
+        "border": 1
+    })
 
-# Save output
-output_df = pd.DataFrame(results)
-output_df = output_df[["A", "B", "C", "D", "E", "F", "G"]]
+    # FORMAT HEADERS
+    for col_num, value in enumerate(output_df.columns.values):
+        worksheet.write(0, col_num, value, header_format)
 
-output_df.to_excel("output.xlsx", index=False)
+    # COLUMN WIDTHS
+    worksheet.set_column("A:A", 20, cell_format)
+    worksheet.set_column("B:B", 40, cell_format)
+    worksheet.set_column("C:C", 80, cell_format)
+    worksheet.set_column("D:D", 25, cell_format)
+    worksheet.set_column("E:E", 35, cell_format)
+    worksheet.set_column("F:F", 15, cell_format)
+    worksheet.set_column("G:G", 70, cell_format)
 
-print("✅ Hybrid processing completed!")
+print("\n===================================")
+print("RITM ANALYSIS COMPLETED")
+print(f"Output saved to: {OUTPUT_FILE}")
+print("===================================")
