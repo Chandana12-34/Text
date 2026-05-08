@@ -31,3 +31,108 @@ response = requests.post(
 result = response.json()
 
 content = result["choices"][0]["message"]["content"]
+
+prompt = f"""
+You are an expert in IT Service Management, ServiceNow ticket analysis, and production support operations.
+
+Analyze the provided ServiceNow ticket data and generate a concise business-friendly ticket insight.
+
+INPUT DATA:
+Ticket Number: {ticket_number}
+
+Short Description:
+{short_description}
+
+Description:
+{description}
+
+Comments and Work Notes:
+{comments}
+
+--------------------------------------------------
+
+Generate output in STRICT JSON format only.
+
+Required JSON structure:
+
+{{
+    "A - RITM": "",
+    "B - Issue Summary": "",
+    "C - Solution Provided": "",
+    "D - Category": "",
+    "E - System Component": "",
+    "F - User Type": "",
+    "G - Actionable Insights": ""
+}}
+
+--------------------------------------------------
+
+COLUMN RULES
+
+A - RITM
+- Prefix with "RITM" if missing.
+
+B - Issue Summary
+- Summarize the actual user issue.
+- Maximum 2 sentences.
+- Keep concise and business-friendly.
+
+C - Solution Provided
+- Extract final analyst resolution/action.
+- Ignore system-generated messages.
+- Ignore inactivity closure text.
+- Maximum 3 concise sentences.
+
+D - Category
+Choose ONLY one:
+- User Knowledge Gap
+- Access Issue
+- Data Confusion
+- System Bug
+- Process Clarification
+- Configuration Error
+- Release/Change Impact
+- Other
+
+E - System Component
+- Mention only relevant application/module names.
+- Return plain text only.
+- No arrays.
+- No brackets.
+Example:
+GCARS, Fenergo
+
+F - User Type
+Return ONLY:
+- Old User
+OR
+- New User
+
+G - Actionable Insights
+Provide only concise business actions.
+
+Rules:
+- Maximum 2 points
+- Keep under 20 words each
+- No JSON
+- No arrays
+- No markdown
+- No bullet symbols
+
+Correct format example:
+Training Opportunities: Educate users on correct workflow trigger.
+Process Improvements: Improve ticket routing validation.
+
+--------------------------------------------------
+
+IMPORTANT OUTPUT RULES
+
+- Return VALID JSON ONLY
+- No markdown
+- No explanations
+- No code block
+- No nested JSON
+- No arrays
+- Keep language concise
+- Keep output management-friendly
+"""
