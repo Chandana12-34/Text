@@ -1,0 +1,33 @@
+url = "https://api.llm.cib.echonet/v1/openai/chat/completions"
+
+headers = {
+    "Authorization": f"Bearer {API_KEY}",
+    "Content-Type": "application/json"
+}
+
+payload = {
+    "model": "mistral-medium-2508-ITG",
+    "messages": [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        },
+        {
+            "role": "user",
+            "content": user_prompt
+        }
+    ],
+    "temperature": 0.1
+}
+
+response = requests.post(
+    url,
+    headers=headers,
+    json=payload,
+    timeout=120,
+    verify=False
+)
+
+result = response.json()
+
+content = result["choices"][0]["message"]["content"]
