@@ -316,3 +316,45 @@ print("\n===================================")
 print("RITM ANALYSIS COMPLETED")
 print(f"Output saved to: {OUTPUT_FILE}")
 print("===================================")
+
+
+
+import requests
+
+url = "https://api.llm.cib.echonet/v1/openai/chat/completions"
+
+headers = {
+    "Authorization": "Bearer YOUR_API_KEY",
+    "Content-Type": "application/json"
+}
+
+payload = {
+    "model": "mistral-medium-2508-ITG",
+    "messages": [
+        {
+            "role": "user",
+            "content": "Say hello"
+        }
+    ],
+    "temperature": 0.1
+}
+
+try:
+
+    response = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=60,
+        verify=False
+    )
+
+    print("STATUS CODE:")
+    print(response.status_code)
+
+    print("\nRESPONSE:")
+    print(response.text)
+
+except Exception as e:
+    print("ERROR:")
+    print(e)
