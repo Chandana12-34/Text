@@ -1,0 +1,47 @@
+# ============================================
+# COLUMN DETECTION
+# ============================================
+
+def find_column(possible_names):
+    for col in df.columns:
+
+        col_clean = str(col).strip().lower()
+
+        for name in possible_names:
+
+            if name.lower() == col_clean:
+                return col
+
+    return None
+
+
+NUMBER_COL = find_column([
+    "number"
+])
+
+SHORT_DESC_COL = find_column([
+    "short description"
+])
+
+DESCRIPTION_COL = find_column([
+    "description"
+])
+
+COMMENTS_COL = find_column([
+    "comments and work notes"
+])
+
+USER_TYPE_COL = find_column([
+    "new vs old user"
+])
+
+
+print("\n========== DETECTED COLUMNS ==========\n")
+
+print("NUMBER_COL:", NUMBER_COL)
+print("SHORT_DESC_COL:", SHORT_DESC_COL)
+print("DESCRIPTION_COL:", DESCRIPTION_COL)
+print("COMMENTS_COL:", COMMENTS_COL)
+print("USER_TYPE_COL:", USER_TYPE_COL)
+
+print("\n======================================\n")
